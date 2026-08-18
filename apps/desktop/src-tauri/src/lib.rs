@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, mpsc};
 
 use engine::{
 	EngineInvocation, EngineOutput, EngineStatus, LiveEngine, default_engine_invocation,
-	spawn_engine,
+	fixture_engine_invocation, spawn_engine,
 };
 
 struct EngineCell {
@@ -25,6 +25,11 @@ impl EngineCell {
 #[tauri::command]
 fn default_engine() -> EngineInvocation {
 	default_engine_invocation()
+}
+
+#[tauri::command]
+fn fixture_engine(scenario: Option<String>) -> Result<EngineInvocation, String> {
+	fixture_engine_invocation(scenario)
 }
 
 #[tauri::command]
@@ -108,6 +113,7 @@ pub fn run() {
 		.manage(cell)
 		.invoke_handler(tauri::generate_handler![
 			default_engine,
+			fixture_engine,
 			engine_status,
 			start_engine,
 			stop_engine,

@@ -24,19 +24,44 @@
 			</header>
 
 			<section class="engine-bar" id="engine-bar">
+				<div class="engine-toolbar">
+					<label class="field">
+						<span>Source</span>
+						<select id="engine-source">
+							<option value="live">Live Atomic</option>
+							<option value="stream">Fixture · stream</option>
+							<option value="tool">Fixture · tool</option>
+							<option value="confirm">Fixture · confirm</option>
+							<option value="select">Fixture · select</option>
+							<option value="abort">Fixture · abort</option>
+						</select>
+					</label>
+					<div class="engine-toolbar-actions">
+						<button type="button" class="btn" id="engine-toggle">Start engine</button>
+						<button type="button" class="btn btn-quiet" id="copy-diagnostics">Copy diagnostics</button>
+					</div>
+				</div>
 				<label class="field">
 					<span>Engine</span>
 					<input id="engine-program" spellcheck="false" autocomplete="off" />
 				</label>
-				<label class="field field-grow">
-					<span>Args</span>
-					<input id="engine-args" spellcheck="false" autocomplete="off" />
+				<label class="field">
+					<span>Args (one per line)</span>
+					<textarea
+						id="engine-args"
+						rows="3"
+						spellcheck="false"
+						placeholder="--mode&#10;rpc"
+					></textarea>
 				</label>
 				<label class="field">
 					<span>Cwd</span>
 					<input id="engine-cwd" spellcheck="false" autocomplete="off" />
 				</label>
-				<button type="button" class="btn" id="engine-toggle">Start engine</button>
+				<details class="diagnostics" id="diagnostics-panel">
+					<summary>Diagnostics</summary>
+					<pre id="diagnostics-log"></pre>
+				</details>
 			</section>
 
 			<main class="transcript" id="transcript" aria-live="polite"></main>
@@ -50,7 +75,15 @@
 				></textarea>
 				<div class="composer-actions">
 					<p class="hint" id="hint">Start the engine to open a session.</p>
+					<p class="queue" id="queue-label" hidden></p>
 					<div class="btn-row">
+						<label class="queue-mode" id="queue-mode">
+							<span>While running</span>
+							<select id="streaming-behavior" disabled>
+								<option value="followUp">Follow-up</option>
+								<option value="steer">Steer</option>
+							</select>
+						</label>
 						<button type="button" class="btn btn-quiet" id="abort" disabled>Abort</button>
 						<button type="submit" class="btn btn-accent" id="send" disabled>Send</button>
 					</div>

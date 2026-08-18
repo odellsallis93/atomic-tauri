@@ -31,6 +31,7 @@
 			nextId: 1,
 			pendingUser: null,
 			tools: new Map(),
+			queue: { steering: [], followUp: [] },
 		};
 	}
 
@@ -100,6 +101,8 @@
 				parts: Array.isArray(message.content) ? message.content.map((block) => ({ ...block })) : [],
 				streaming: Boolean(streaming),
 			};
+			item.stopReason = message.stopReason;
+			item.errorMessage = message.errorMessage;
 			if (streaming) {
 				session.streamingId = push(session, item).id;
 			} else {
@@ -109,6 +112,8 @@
 					existing.thinking = item.thinking;
 					existing.parts = item.parts;
 					existing.streaming = false;
+					existing.stopReason = item.stopReason;
+					existing.errorMessage = item.errorMessage;
 					session.streamingId = null;
 				} else {
 					push(session, item);
@@ -126,7 +131,21 @@
 			case "agent_end":
 			case "agent_settled":
 				session.streaming = false;
-				return { kind: "status", streaming: false };
+				session.queue = { steering: [], followUp: [] };
+				return { kind: "status", streaming: false, queue: session.queue };
+			case "queue_update":
+				session.queue = {
+					steering: Array.from(event.steering || []),
+					followUp: Array.from(event.followUp || []),
+				};
+				return { kind: "queue", queue: session.queue };
+			case "agent_continue_error":
+			case "extension_error":
+				push(session, {
+					kind: "error",
+					text: event.errorMessage || event.error || event.type,
+				});
+				return { kind: "transcript" };
 			case "message_start":
 				ingestMessage(session, event.message, event.message && event.message.role === "assistant");
 				return { kind: "transcript" };
@@ -188,6 +207,7 @@
 		session.tools = new Map();
 		session.streamingId = null;
 		session.pendingUser = null;
+		session.queue = { steering: [], followUp: [] };
 		for (const message of messages || []) ingestMessage(session, message, false);
 	}
 
@@ -203,5 +223,6 @@
 		loadMessages,
 		noteLocalUser,
 		extractText,
+		applyAssistantDelta,
 	};
 })(globalThis);

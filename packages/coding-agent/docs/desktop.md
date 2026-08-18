@@ -17,9 +17,11 @@ This proof of concept is that host:
 
 1. Spawn `atomic --mode rpc` (or this checkout's CLI) with piped stdio.
 2. Speak the documented JSONL RPC from [RPC mode](/rpc).
-3. Render user/assistant text, streaming deltas, tool status, and blocking extension dialogs.
+3. Render user/assistant text, streaming deltas, tool status, abort, queued follow-up/steer, and blocking extension dialogs.
 
 It does not read credential or configuration files. The engine still owns sessions, tools, extensions, settings, models, trust, and authentication.
+
+When a live model is not configured, the window's **Source** control can start a Node fixture (`apps/desktop/fixtures/mock-rpc-engine.mjs`) that speaks the same JSONL. That is how streaming, tool cards, abort, and confirm/select are proven without an API key. The fixture is not a substitute for Atomic.
 
 ## Run it
 
@@ -31,7 +33,13 @@ cargo test
 cargo run
 ```
 
-`ATOMIC_DESKTOP_ENGINE` overrides the child command. `--mode rpc` is added if missing. Details, Linux WebKit packages, and the protocol gaps the host ran into are in `apps/desktop/README.md` at the repository root.
+Headless proofs (no GUI):
+
+```bash
+node --test apps/desktop/src/session.test.mjs apps/desktop/fixtures/mock-rpc-engine.test.mjs
+```
+
+`ATOMIC_DESKTOP_ENGINE` overrides the live child command. `--mode rpc` is added if the program looks like Atomic and the flag is missing. Details, Linux WebKit packages, and the Phase 2 protocol-gap record are in `apps/desktop/README.md` and `apps/desktop/PROTOCOL.md` at the repository root.
 
 ## What this does not change
 

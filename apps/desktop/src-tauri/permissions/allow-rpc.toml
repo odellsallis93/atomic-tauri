@@ -3,6 +3,7 @@ identifier = "allow-rpc"
 description = "Spawn the Atomic RPC engine and exchange JSONL frames with it"
 commands.allow = [
 	"default_engine",
+	"fixture_engine",
 	"engine_status",
 	"start_engine",
 	"stop_engine",

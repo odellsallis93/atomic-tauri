@@ -113,9 +113,53 @@ pub fn parse_invocation(raw: &str, cwd: Option<PathBuf>) -> EngineInvocation {
 		|| ("atomic".to_string(), Vec::new()),
 		|(program, rest)| (program.clone(), rest.to_vec()),
 	);
-	let mut args = args;
-	ensure_rpc_mode(&mut args);
-	EngineInvocation { program, args, cwd: cwd.map(|path| path.display().to_string()) }
+	let mut invocation = EngineInvocation {
+		program,
+		args: args.to_vec(),
+		cwd: cwd.map(|path| path.display().to_string()),
+	};
+	prepare_invocation(&mut invocation);
+	invocation
+}
+
+pub fn fixture_engine_invocation(scenario: Option<String>) -> Result<EngineInvocation, String> {
+	let repo = discover_repo_root()
+		.ok_or_else(|| "could not find the Atomic repository root".to_string())?;
+	let script = repo.join("apps/desktop/fixtures/mock-rpc-engine.mjs");
+	if !script.is_file() {
+		return Err(format!("fixture engine not found at {}", script.display()));
+	}
+	let node = find_on_path("node").ok_or_else(|| "node is not on PATH".to_string())?;
+	let mut args = vec![script.display().to_string()];
+	if let Some(scenario) = scenario.filter(|value| !value.is_empty()) {
+		args.push("--scenario".to_string());
+		args.push(scenario);
+	}
+	Ok(EngineInvocation {
+		program: node.display().to_string(),
+		args,
+		cwd: Some(repo.display().to_string()),
+	})
+}
+
+pub fn prepare_invocation(invocation: &mut EngineInvocation) {
+	if should_ensure_rpc_mode(invocation) {
+		ensure_rpc_mode(&mut invocation.args);
+	}
+}
+
+pub fn should_ensure_rpc_mode(invocation: &EngineInvocation) -> bool {
+	let program = std::path::Path::new(&invocation.program)
+		.file_name()
+		.and_then(|name| name.to_str())
+		.unwrap_or(invocation.program.as_str())
+		.to_ascii_lowercase();
+	matches!(program.as_str(), "atomic" | "atomic.exe" | "cli.ts" | "cli.js")
+		|| invocation.args.iter().any(|arg| {
+			let lower = arg.to_ascii_lowercase();
+			lower.contains("coding-agent")
+				&& (lower.ends_with("cli.ts") || lower.ends_with("cli.js") || lower.contains("cli."))
+		})
 }
 
 pub fn ensure_rpc_mode(args: &mut Vec<String>) {
@@ -134,6 +178,9 @@ pub async fn spawn_engine(
 	if invocation.program.trim().is_empty() {
 		return Err("engine program is empty".to_string());
 	}
+
+	let mut invocation = invocation;
+	prepare_invocation(&mut invocation);
 
 	let mut command = Command::new(&invocation.program);
 	command
@@ -271,7 +318,10 @@ fn tokenize(raw: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-	use super::{ensure_rpc_mode, parse_invocation};
+	use super::{
+		EngineInvocation, ensure_rpc_mode, fixture_engine_invocation, parse_invocation,
+		should_ensure_rpc_mode,
+	};
 
 	#[test]
 	fn appends_rpc_mode_when_missing() {
@@ -292,5 +342,50 @@ mod tests {
 		let invocation = parse_invocation(r#"/usr/bin/atomic --mode rpc --name "desk poc""#, None);
 		assert_eq!(invocation.program, "/usr/bin/atomic");
 		assert_eq!(invocation.args, ["--mode", "rpc", "--name", "desk poc"]);
+	}
+
+	#[test]
+	fn parse_invocation_does_not_force_rpc_on_the_fixture() {
+		let invocation = parse_invocation(
+			"node /tmp/apps/desktop/fixtures/mock-rpc-engine.mjs --scenario tool",
+			None,
+		);
+		assert_eq!(invocation.program, "node");
+		assert_eq!(
+			invocation.args,
+			["/tmp/apps/desktop/fixtures/mock-rpc-engine.mjs", "--scenario", "tool"]
+		);
+	}
+
+	#[test]
+	fn atomic_cli_invocations_get_rpc_mode() {
+		let invocation = EngineInvocation {
+			program: "bun".to_string(),
+			args: vec!["packages/coding-agent/src/cli.ts".to_string()],
+			cwd: None,
+		};
+		assert!(should_ensure_rpc_mode(&invocation));
+		let node_fixture = EngineInvocation {
+			program: "node".to_string(),
+			args: vec!["apps/desktop/fixtures/mock-rpc-engine.mjs".to_string()],
+			cwd: None,
+		};
+		assert!(!should_ensure_rpc_mode(&node_fixture));
+	}
+
+	#[test]
+	fn fixture_engine_points_at_the_mock_script() {
+		let invocation = fixture_engine_invocation(Some("tool".to_string())).expect("repo fixture");
+		assert!(invocation.program.to_ascii_lowercase().contains("node"), "{}", invocation.program);
+		assert!(invocation.args.iter().any(|arg| arg.ends_with("mock-rpc-engine.mjs")));
+		assert_eq!(
+			invocation
+				.args
+				.windows(2)
+				.find(|window| window[0] == "--scenario")
+				.map(|window| window[1].as_str()),
+			Some("tool")
+		);
+		assert!(!invocation.args.iter().any(|arg| arg == "--mode" || arg == "rpc"));
 	}
 }

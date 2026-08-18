@@ -1,12 +1,16 @@
 (function () {
 	"use strict";
 
+	const STARTUP_TIMEOUT_MS = 8000;
+	const STDERR_CAP = 32 * 1024;
+
 	const transcriptEl = document.getElementById("transcript");
 	const promptEl = document.getElementById("prompt");
 	const sendEl = document.getElementById("send");
 	const abortEl = document.getElementById("abort");
 	const hintEl = document.getElementById("hint");
 	const toggleEl = document.getElementById("engine-toggle");
+	const sourceEl = document.getElementById("engine-source");
 	const programEl = document.getElementById("engine-program");
 	const argsEl = document.getElementById("engine-args");
 	const cwdEl = document.getElementById("engine-cwd");
@@ -18,12 +22,22 @@
 	const uiMessageEl = document.getElementById("ui-message");
 	const uiBodyEl = document.getElementById("ui-body");
 	const uiConfirmEl = document.getElementById("ui-confirm");
+	const queueLabelEl = document.getElementById("queue-label");
+	const streamingBehaviorEl = document.getElementById("streaming-behavior");
+	const diagnosticsLogEl = document.getElementById("diagnostics-log");
+	const copyDiagnosticsEl = document.getElementById("copy-diagnostics");
 
 	const session = AtomicSession.createSession();
 	let requestSeq = 0;
 	let connected = false;
 	let streaming = false;
 	const pending = new Map();
+	const diagnostics = {
+		invocation: null,
+		lastError: "",
+		stderr: "",
+		exitCode: null,
+	};
 
 	function tauri() {
 		return window.__TAURI__;
@@ -39,6 +53,27 @@
 		return `${prefix}-${requestSeq}`;
 	}
 
+	function parseArgLines(text) {
+		return String(text || "")
+			.split(/\n/)
+			.map((line) => line.trim())
+			.filter(Boolean);
+	}
+
+	function fillInvocation(invocation) {
+		programEl.value = invocation.program || "";
+		argsEl.value = (invocation.args || []).join("\n");
+		cwdEl.value = invocation.cwd || "";
+	}
+
+	function currentInvocation() {
+		return {
+			program: programEl.value.trim(),
+			args: parseArgLines(argsEl.value),
+			cwd: cwdEl.value.trim() || null,
+		};
+	}
+
 	function setRunState(state, label) {
 		runPillEl.dataset.state = state;
 		runPillEl.textContent = label;
@@ -48,11 +83,60 @@
 		hintEl.textContent = text;
 	}
 
+	function recordError(error) {
+		const text = error instanceof Error ? error.message : String(error);
+		diagnostics.lastError = text;
+		renderDiagnostics();
+		return text;
+	}
+
+	function appendStderr(chunk) {
+		diagnostics.stderr += String(chunk || "");
+		if (diagnostics.stderr.length > STDERR_CAP) {
+			diagnostics.stderr = diagnostics.stderr.slice(diagnostics.stderr.length - STDERR_CAP);
+		}
+		renderDiagnostics();
+	}
+
+	function diagnosticsText() {
+		const invocation = diagnostics.invocation || currentInvocation();
+		const lines = [
+			`program: ${invocation.program || ""}`,
+			`args: ${JSON.stringify(invocation.args || [])}`,
+			`cwd: ${invocation.cwd || ""}`,
+			`exitCode: ${diagnostics.exitCode == null ? "" : diagnostics.exitCode}`,
+			`lastError: ${diagnostics.lastError || ""}`,
+			"stderr:",
+			diagnostics.stderr || "(empty)",
+		];
+		return lines.join("\n");
+	}
+
+	function renderDiagnostics() {
+		diagnosticsLogEl.textContent = diagnosticsText();
+	}
+
+	function renderQueue(queue) {
+		const steering = (queue && queue.steering) || [];
+		const followUp = (queue && queue.followUp) || [];
+		if (!steering.length && !followUp.length) {
+			queueLabelEl.hidden = true;
+			queueLabelEl.textContent = "";
+			return;
+		}
+		const parts = [];
+		if (steering.length) parts.push(`Steer: ${steering.join(" · ")}`);
+		if (followUp.length) parts.push(`Follow-up: ${followUp.join(" · ")}`);
+		queueLabelEl.hidden = false;
+		queueLabelEl.textContent = parts.join(" | ");
+	}
+
 	function setConnected(value) {
 		connected = value;
 		promptEl.disabled = !value;
 		sendEl.disabled = !value;
 		abortEl.disabled = !value || !streaming;
+		streamingBehaviorEl.disabled = !value;
 		toggleEl.textContent = value ? "Stop engine" : "Start engine";
 		if (!value) setRunState("idle", "idle");
 	}
@@ -61,6 +145,12 @@
 		streaming = value;
 		abortEl.disabled = !connected || !value;
 		setRunState(value ? "running" : connected ? "idle" : "idle", value ? "running" : "idle");
+	}
+
+	function assistantRole(item) {
+		if (item.streaming) return "Atomic · streaming";
+		if (item.stopReason === "aborted") return "Atomic · aborted";
+		return "Atomic";
 	}
 
 	function renderItem(item) {
@@ -75,19 +165,27 @@
 			role.textContent = "You";
 			body.textContent = item.text || "";
 		} else if (item.kind === "assistant") {
-			role.textContent = item.streaming ? "Atomic · streaming" : "Atomic";
+			role.textContent = assistantRole(item);
 			if (item.thinking) {
 				const thinking = document.createElement("p");
 				thinking.className = "thinking";
 				thinking.textContent = item.thinking;
 				card.append(role, thinking, body);
-				body.textContent = item.text || "";
+				body.textContent = item.text || item.errorMessage || "";
 				return card;
 			}
-			body.textContent = item.text || "";
+			body.textContent = item.text || item.errorMessage || "";
 		} else if (item.kind === "tool") {
 			role.textContent = `${item.toolName} · ${item.phase}`;
-			body.textContent = item.output || JSON.stringify(item.args ?? {}, null, 2);
+			const args = item.args ? JSON.stringify(item.args) : "";
+			body.textContent = item.output ? item.output : args;
+			if (item.output && args) {
+				const meta = document.createElement("p");
+				meta.className = "tool-meta";
+				meta.textContent = args;
+				card.append(role, body, meta);
+				return card;
+			}
 		} else {
 			role.textContent = item.kind;
 			body.textContent = item.text || "";
@@ -117,6 +215,22 @@
 		await invoke("send_line", { value });
 		return new Promise((resolve, reject) => {
 			pending.set(id, { resolve, reject, command: value.type });
+		});
+	}
+
+	function withTimeout(promise, ms, message) {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error(message)), ms);
+			promise.then(
+				(value) => {
+					clearTimeout(timer);
+					resolve(value);
+				},
+				(error) => {
+					clearTimeout(timer);
+					reject(error);
+				},
+			);
 		});
 	}
 
@@ -157,13 +271,15 @@
 				select.append(node);
 			}
 			uiBodyEl.append(select);
+			uiConfirmEl.textContent = "OK";
 			collect = (submitter) =>
 				submitter && submitter.value === "ok" ? { value: select.value } : { cancelled: true };
 		} else if (method === "input" || method === "editor") {
 			const field = document.createElement(method === "editor" ? "textarea" : "input");
 			if (method === "editor") field.rows = 8;
-			field.value = request.value || request.text || "";
+			field.value = request.value || request.text || request.prefill || "";
 			uiBodyEl.append(field);
+			uiConfirmEl.textContent = "OK";
 			collect = (submitter) =>
 				submitter && submitter.value === "ok" ? { value: field.value } : { cancelled: true };
 		} else {
@@ -208,35 +324,65 @@
 		}
 		const result = AtomicSession.handleEvent(session, frame);
 		if (result.kind === "transcript") renderTranscript();
-		if (result.kind === "status") setStreaming(Boolean(result.streaming));
+		if (result.kind === "status") {
+			setStreaming(Boolean(result.streaming));
+			if (result.queue) renderQueue(result.queue);
+		}
+		if (result.kind === "queue") renderQueue(result.queue);
 		if (result.kind === "model" && result.model) {
 			modelPillEl.textContent = result.model.id || result.model.name || "model";
 		}
 		if (result.kind === "session-name" && result.name) sessionLabelEl.textContent = result.name;
-		if (result.kind === "ui") handleUiRequest(result.request).catch((error) => addStatus(error.message, "error"));
+		if (result.kind === "ui") {
+			handleUiRequest(result.request).catch((error) => addStatus(recordError(error), "error"));
+		}
+	}
+
+	async function applySource() {
+		const source = sourceEl.value;
+		try {
+			if (source === "live") {
+				fillInvocation(await invoke("default_engine"));
+			} else {
+				fillInvocation(await invoke("fixture_engine", { scenario: source }));
+			}
+			renderDiagnostics();
+		} catch (error) {
+			setHint(recordError(error));
+			setRunState("error", "error");
+		}
 	}
 
 	async function startEngine() {
-		const invocation = {
-			program: programEl.value.trim(),
-			args: argsEl.value.trim() ? argsEl.value.trim().split(/\s+/).filter(Boolean) : [],
-			cwd: cwdEl.value.trim() || null,
-		};
+		const invocation = currentInvocation();
+		diagnostics.invocation = invocation;
+		diagnostics.lastError = "";
+		diagnostics.stderr = "";
+		diagnostics.exitCode = null;
+		renderDiagnostics();
 		setHint("Starting engine…");
 		try {
 			const status = await invoke("start_engine", { invocation });
 			setConnected(true);
 			setHint(status.pid ? `Engine pid ${status.pid}` : "Engine started");
 			try {
-				await sendCommand({ type: "get_state" });
+				await withTimeout(
+					sendCommand({ type: "get_state" }),
+					STARTUP_TIMEOUT_MS,
+					`Engine started but did not answer get_state within ${STARTUP_TIMEOUT_MS}ms. Copy diagnostics.`,
+				);
 				await sendCommand({ type: "get_messages" });
 			} catch (error) {
-				addStatus(error.message, "error");
+				const text = recordError(error);
+				addStatus(text, "error");
+				setRunState("error", "error");
+				setHint(text);
 			}
 		} catch (error) {
+			const text = recordError(error);
 			setRunState("error", "error");
-			setHint(error.message || String(error));
-			addStatus(error.message || String(error), "error");
+			setHint(text);
+			addStatus(text, "error");
 		}
 	}
 
@@ -244,7 +390,7 @@
 		try {
 			await invoke("stop_engine");
 		} catch (error) {
-			addStatus(error.message, "error");
+			addStatus(recordError(error), "error");
 		}
 	}
 
@@ -257,10 +403,11 @@
 		renderTranscript();
 		try {
 			const command = { type: "prompt", message: text };
-			if (streaming) command.streamingBehavior = "followUp";
+			if (streaming) command.streamingBehavior = streamingBehaviorEl.value || "followUp";
 			await sendCommand(command);
 		} catch (error) {
-			addStatus(error.message, "error");
+			const message = recordError(error);
+			addStatus(message, "error");
 			setRunState("error", "error");
 		}
 	}
@@ -269,7 +416,23 @@
 		try {
 			await sendCommand({ type: "abort" });
 		} catch (error) {
-			addStatus(error.message, "error");
+			addStatus(recordError(error), "error");
+		}
+	}
+
+	async function copyDiagnostics() {
+		const text = diagnosticsText();
+		try {
+			await navigator.clipboard.writeText(text);
+			setHint("Diagnostics copied.");
+		} catch {
+			diagnosticsLogEl.focus();
+			const range = document.createRange();
+			range.selectNodeContents(diagnosticsLogEl);
+			const selection = window.getSelection();
+			selection.removeAllRanges();
+			selection.addRange(range);
+			setHint("Clipboard unavailable. Diagnostics selected — copy them manually.");
 		}
 	}
 
@@ -277,12 +440,11 @@
 		if (!tauri()) {
 			setHint("Open this UI through the Tauri host, not a plain browser tab.");
 			toggleEl.disabled = true;
+			sourceEl.disabled = true;
+			copyDiagnosticsEl.disabled = true;
 			return;
 		}
-		const invocation = await invoke("default_engine");
-		programEl.value = invocation.program || "";
-		argsEl.value = (invocation.args || []).join(" ");
-		cwdEl.value = invocation.cwd || "";
+		await applySource();
 
 		await tauri().event.listen("engine-line", (event) => {
 			const line = String(event.payload ?? "").trim();
@@ -294,21 +456,31 @@
 			}
 		});
 		await tauri().event.listen("engine-stderr", (event) => {
-			if (event.payload && String(event.payload).trim()) {
-				console.debug(event.payload);
-			}
+			if (event.payload) appendStderr(event.payload);
 		});
 		await tauri().event.listen("engine-exit", (event) => {
 			for (const waiter of pending.values()) waiter.reject(new Error("engine exited"));
 			pending.clear();
+			diagnostics.exitCode = event.payload == null ? null : event.payload;
+			renderDiagnostics();
 			setConnected(false);
 			setStreaming(false);
-			setHint(`Engine exited${event.payload == null ? "" : ` (${event.payload})`}.`);
+			renderQueue({ steering: [], followUp: [] });
+			const code = event.payload == null ? "" : ` (${event.payload})`;
+			const message = `Engine exited${code}.`;
+			setHint(message);
+			if (event.payload) addStatus(message, "error");
 		});
 
 		toggleEl.addEventListener("click", () => {
 			if (connected) stopEngine();
 			else startEngine();
+		});
+		sourceEl.addEventListener("change", () => {
+			if (!connected) applySource();
+		});
+		copyDiagnosticsEl.addEventListener("click", () => {
+			copyDiagnostics().catch((error) => setHint(recordError(error)));
 		});
 		document.getElementById("composer").addEventListener("submit", onSubmit);
 		abortEl.addEventListener("click", onAbort);
@@ -318,10 +490,11 @@
 				document.getElementById("composer").requestSubmit();
 			}
 		});
+		renderDiagnostics();
 	}
 
 	boot().catch((error) => {
-		setHint(error.message || String(error));
+		setHint(recordError(error));
 		setRunState("error", "error");
 	});
 })();

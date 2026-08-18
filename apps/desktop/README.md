@@ -4,6 +4,8 @@ Optional Tauri host that starts the existing Atomic engine over `--mode rpc` and
 
 This is the first slice described on [issue 2352](https://github.com/bastani-inc/atomic/issues/2352): a real host consuming the current protocol, so the protocol additions a GUI actually needs can be named from use rather than invented up front.
 
+Phase 1 of this host is making those proofs trustworthy (streaming, tools, abort, queues, dialogs, and a UI that does not hide spawn failure). Phase 2 is the gap record in [PROTOCOL.md](./PROTOCOL.md). Neither phase changes the TUI or the RPC schema.
+
 ## Why this shape
 
 Atomic already has a host/engine split. The public embed API is JSONL over stdin/stdout (`atomic --mode rpc`). The TUI uses that same child, plus a private isolation layer (`engine_ready` / `engine_bound` / remote paint). A first desktop host should speak the public RPC. The isolation frames are TUI compositor details; copying them would hide the gaps instead of exposing them.
@@ -19,11 +21,14 @@ The webview does not read `~/.atomic` credential or settings files. It spawns th
 ## What the PoC renders
 
 - Engine start/stop, with a default command that prefers this checkout's CLI (`bun packages/coding-agent/src/cli.ts --mode rpc`) when present
+- A fixture engine (`node apps/desktop/fixtures/mock-rpc-engine.mjs`) so streaming, tools, abort, and dialogs can be proven without an API key
 - Session transcript from `get_messages`, then live `message_start` / `message_update` / `message_end`
-- Prompt input (`prompt`, with `streamingBehavior: "followUp"` while a turn is running)
+- Prompt input (`prompt`, with `streamingBehavior` `followUp` or `steer` while a turn is running)
 - Abort
 - Tool cards from `tool_execution_start` / `update` / `end`
 - Blocking extension dialogs (`confirm`, `select`, `input`, `editor`) so a permission prompt does not stall the pipe
+- Engine/args/cwd as full-width fields, args one per line (paths with spaces stay one argument)
+- Startup failures in the transcript, plus a diagnostics buffer (stderr, last invocation, last error) with copy
 
 Out of scope on purpose: session picker, model picker chrome, themes as CSS tokens, custom extension UI, packaging/CI, host capability handshake.
 
@@ -46,42 +51,36 @@ cargo tauri dev
 
 Linux needs the usual Tauri WebKit/GTK dev packages. macOS and Windows use the platform webview.
 
-Override the engine with `ATOMIC_DESKTOP_ENGINE`, for example:
+In the window, **Source** chooses live Atomic or a fixture scenario (`stream`, `tool`, `confirm`, `select`, `abort`). Start the engine, then send a prompt. While a turn is running, **Follow-up** queues until idle and **Steer** queues a mid-turn correction. **Abort** cuts the fixture's slow stream.
+
+Override the live engine with `ATOMIC_DESKTOP_ENGINE`, for example:
 
 ```bash
 ATOMIC_DESKTOP_ENGINE="atomic --mode rpc --no-session" cargo run
 ```
 
-The host always ensures `--mode rpc` is present. It writes JSONL with LF only, including on Windows.
+`--mode rpc` is added only when the program looks like Atomic (`atomic`, `cli.ts`, `cli.js`, or a `coding-agent` CLI path). The fixture is `node` plus a script; do not append `--mode rpc` there. The host writes JSONL with LF only, including on Windows.
 
-JSONL framing tests (no GUI):
+JSONL framing and fixture-path tests (no GUI):
 
 ```bash
 cd apps/desktop/src-tauri
 cargo test
 ```
 
+Fixture and session assembler (no GUI):
+
+```bash
+node --test apps/desktop/src/session.test.mjs apps/desktop/fixtures/mock-rpc-engine.test.mjs
+```
+
 ## Protocol additions this host made obvious
 
-These are the gaps to discuss next. None of them are implemented here.
+See [PROTOCOL.md](./PROTOCOL.md) for the Phase 2 record. Each gap is: what the app tried, what failed cleanly, the smallest protocol change, and a test that would prove it.
 
-**Host identity.** RPC sessions bind extensions with `ctx.mode === "rpc"` and `ctx.hasUI === true`. This desktop host and a CI embedder look the same. A GUI-aware extension still cannot write `ctx.ui.hostInfo.kind === "gui"` because that field does not exist. The right follow-up is an additive handshake on the existing RPC, not a new GUI mode that forks the engine.
+Short list: host identity, `list_sessions`, cwd/open-folder, typed permission prompts, custom UI, theme tokens, auth open-URL, notify mapping, an optional RPC hello, and structured `engine_error` codes. None of those are implemented here.
 
-**Session listing.** `switch_session` takes a path. There is no `list_sessions` command. A desktop "open recents" UI would otherwise have to read `~/.atomic/agent/sessions` itself, which this host must not do.
-
-**Project folder.** Cwd is fixed at spawn. "Open folder" today means kill and respawn. A `set_cwd` or equivalent would keep the window and drop the session in one step, or make the restart explicit.
-
-**Typed permission prompts.** Tool approval arrives as a generic `extension_ui_request` (`select` / `confirm`) with a title string. That is enough to unblock the pipe. It is not enough to render Allow/Deny as a first-class desktop control without parsing copy.
-
-**Custom UI.** `ctx.ui.custom()` is TUI-only over RPC (`undefined`). Structured `tool_execution_*` events are enough for a basic tool card. Rich tool views need a web-oriented custom-UI protocol, not ANSI frames from the interactive-engine painter.
-
-**Themes.** RPC has no palette or CSS token export. This UI hardcodes Catppuccin Mocha from `DESIGN.md`.
-
-**Auth.** `login_provider` exists, but this PoC has no login chrome. OAuth device codes and "open this URL" still need a host-visible event if the desktop app is the thing that should open a browser.
-
-**Notifications / window title.** Fire-and-forget `setTitle` / `notify` work if the host implements them. There is no native notification primitive.
-
-What already worked without protocol changes: spawn, `get_state`, `get_messages`, `prompt`, streaming `text_delta`, tool lifecycle, abort, and the extension UI request/response dance.
+What already worked without protocol changes: spawn, `get_state`, `get_messages`, `prompt`, streaming `text_delta`, tool lifecycle, abort, follow-up/steer queues, and the extension UI request/response dance.
 
 ## Suggested follow-up PRs
 
