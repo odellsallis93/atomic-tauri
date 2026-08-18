@@ -23,6 +23,8 @@ It does not read credential or configuration files. The engine still owns sessio
 
 When a live model is not configured, the window's **Source** control can start a Node fixture (`apps/desktop/fixtures/mock-rpc-engine.mjs`) that speaks the same JSONL. That is how streaming, tool cards, abort, and confirm/select are proven without an API key. The fixture is not a substitute for Atomic.
 
+A live proof uses a provider key already in the engine process environment (`ANTHROPIC_API_KEY` and the other documented provider variables). The webview still does not read those values. `node apps/desktop/scripts/live-rpc-smoke.mjs` is the headless version of that check.
+
 ## Run it
 
 From a source checkout:

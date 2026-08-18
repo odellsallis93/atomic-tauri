@@ -119,6 +119,6 @@ These were proven on the public protocol, using the Node fixture in `apps/deskto
 | Follow-up / steer while running | `prompt` + `streamingBehavior`, or `steer` / `follow_up`; `queue_update` |
 | Confirm / select dialogs | Fixture `confirm` / `select`; host `extension_ui_response` unblocks the pipe |
 
-A live engine without credentials still fails `prompt` with a correlated error rather than hanging. That is protocol working, not a gap. The fixture exists so streaming, tools, abort, and dialogs can be proven without an API key.
+A live engine without credentials still fails `prompt` with a correlated error rather than hanging. That is protocol working, not a gap. The fixture exists so streaming, tools, abort, and dialogs can be proven without an API key. When a provider key is in the engine environment, `node apps/desktop/scripts/live-rpc-smoke.mjs` is the headless live-streaming check.
 
 JSONL framing (LF only, optional trailing CR, no Unicode-separator splits) is covered by `cargo test` in `apps/desktop/src-tauri`.

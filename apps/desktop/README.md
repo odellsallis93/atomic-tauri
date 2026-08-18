@@ -74,6 +74,12 @@ Fixture and session assembler (no GUI):
 node --test apps/desktop/src/session.test.mjs apps/desktop/fixtures/mock-rpc-engine.test.mjs
 ```
 
+Live engine smoke (needs a provider key in the environment, such as `ANTHROPIC_API_KEY`; the script never prints the value and is not part of required CI):
+
+```bash
+node apps/desktop/scripts/live-rpc-smoke.mjs
+```
+
 ## Protocol additions this host made obvious
 
 See [PROTOCOL.md](./PROTOCOL.md) for the Phase 2 record. Each gap is: what the app tried, what failed cleanly, the smallest protocol change, and a test that would prove it.
