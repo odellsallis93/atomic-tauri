@@ -107,6 +107,8 @@
 				session.pendingUser = null;
 				return;
 			}
+			const lastUser = session.items.findLast((entry) => entry.kind === "user");
+			if (lastUser && lastUser.text === text) return;
 			push(session, { kind: "user", text });
 			return;
 		}

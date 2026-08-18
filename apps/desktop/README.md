@@ -94,7 +94,7 @@ See [PROTOCOL_GAPS.md](./PROTOCOL_GAPS.md). Short version:
 
 **Auth.** `login_provider` exists. This host has no login chrome. Keys are inherited by the engine child; the webview does not read them.
 
-What already worked without protocol changes, and is covered by the live tests when a key is present: spawn, `get_state`, `prompt`, streaming `text_delta`, bash tool lifecycle, abort, steer / `queue_update`.
+What already worked without protocol changes, and is covered by the live tests when a key is present: spawn, `get_state`, `prompt`, a completed assistant turn (Haiku sometimes skips `text_delta` on a one-word reply; the assembler still handles deltas), bash tool lifecycle, abort, steer / `queue_update`.
 
 ## Suggested follow-up PRs
 

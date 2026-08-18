@@ -60,22 +60,19 @@ describe("live RPC against Anthropic Haiku", { concurrency: 1, skip }, () => {
 		assert.equal(state.data.sessionFile, undefined);
 	});
 
-	live("prompt streams text_delta and the assembler renders the reply", async () => {
+	live("prompt completes and the assembler renders the reply", async () => {
 		await engine.session.request({ type: "new_session" });
 		const session = AtomicSession.createSession();
 		const prompt = "Reply with the single word: pong";
 		const mark = engine.session.mark();
 		AtomicSession.noteLocalUser(session, prompt);
 		await engine.session.request({ type: "prompt", message: prompt });
-		await engine.session.wait(
-			(frame) =>
-				frame.type === "message_update" &&
-				frame.assistantMessageEvent &&
-				frame.assistantMessageEvent.type === "text_delta",
-			LIVE_RPC_TIMEOUT_MS,
-		);
-		await waitForAgentEnd(engine.session);
-		for (const frame of engine.session.since(mark)) {
+		await waitForAgentEnd(engine.session, LIVE_RPC_TIMEOUT_MS, mark);
+		const turn = engine.session.since(mark);
+		const types = turn.map((frame) => frame.type);
+		assert.ok(types.includes("agent_end"), `expected agent_end, got ${types.join(",")}`);
+		assert.ok(types.includes("message_end"), `expected message_end, got ${types.join(",")}`);
+		for (const frame of turn) {
 			if (frame.type === "response") continue;
 			AtomicSession.handleEvent(session, frame);
 		}
@@ -91,15 +88,18 @@ describe("live RPC against Anthropic Haiku", { concurrency: 1, skip }, () => {
 		const mark = engine.session.mark();
 		await engine.session.request({ type: "prompt", message: prompt });
 		const toolStart = await engine.session.wait(
-			(frame) => frame.type === "tool_execution_start",
+			(frame) => frame.type === "tool_execution_start" || frame.type === "agent_end",
 			LIVE_RPC_TIMEOUT_MS,
+			mark,
 		);
+		assert.equal(toolStart.type, "tool_execution_start", "model finished without calling bash");
 		assert.equal(toolStart.toolName, "bash");
 		await engine.session.wait(
 			(frame) => frame.type === "tool_execution_end" && frame.toolCallId === toolStart.toolCallId,
 			LIVE_RPC_TIMEOUT_MS,
+			mark,
 		);
-		await waitForAgentEnd(engine.session);
+		await waitForAgentEnd(engine.session, LIVE_RPC_TIMEOUT_MS, mark);
 		assert.equal(
 			engine.session.since(mark).filter((frame) => frame.type === "extension_ui_request").length,
 			0,
@@ -124,10 +124,10 @@ describe("live RPC against Anthropic Haiku", { concurrency: 1, skip }, () => {
 		const prompt = "Use the bash tool to run sleep 25. After it finishes, reply with the single word: done.";
 		const mark = engine.session.mark();
 		await engine.session.request({ type: "prompt", message: prompt });
-		await engine.session.wait((frame) => frame.type === "tool_execution_start", LIVE_RPC_TIMEOUT_MS);
+		await engine.session.wait((frame) => frame.type === "tool_execution_start", LIVE_RPC_TIMEOUT_MS, mark);
 		const aborted = await engine.session.request({ type: "abort" });
 		assert.equal(aborted.command, "abort");
-		const ended = await waitForAgentEnd(engine.session);
+		const ended = await waitForAgentEnd(engine.session, LIVE_RPC_TIMEOUT_MS, mark);
 		const turn = engine.session.since(mark);
 		const stopReasons = (ended.messages || [])
 			.filter((message) => message.role === "assistant")
@@ -154,19 +154,19 @@ describe("live RPC against Anthropic Haiku", { concurrency: 1, skip }, () => {
 		const prompt = "Use the bash tool to run sleep 8. After it finishes, reply with the single word: finished.";
 		const mark = engine.session.mark();
 		await engine.session.request({ type: "prompt", message: prompt });
-		await engine.session.wait((frame) => frame.type === "tool_execution_start", LIVE_RPC_TIMEOUT_MS);
+		await engine.session.wait((frame) => frame.type === "tool_execution_start", LIVE_RPC_TIMEOUT_MS, mark);
 		await engine.session.request({
 			type: "prompt",
 			message: "Do not wait. Reply with only the word: steered",
 			streamingBehavior: "steer",
 		});
-		const queue = await engine.session.wait((frame) => frame.type === "queue_update", LIVE_RPC_TIMEOUT_MS);
+		const queue = await engine.session.wait((frame) => frame.type === "queue_update", LIVE_RPC_TIMEOUT_MS, mark);
 		assert.ok(Array.isArray(queue.steering));
 		assert.ok(queue.steering.length > 0, `expected steering queue, got ${JSON.stringify(queue.steering)}`);
 		const applied = AtomicSession.handleEvent(AtomicSession.createSession(), queue);
 		assert.equal(applied.kind, "queue");
 		assert.ok(applied.queue.steering.length >= 1);
-		await waitForAgentEnd(engine.session);
+		await waitForAgentEnd(engine.session, LIVE_RPC_TIMEOUT_MS, mark);
 		assert.ok(engine.session.since(mark).some((frame) => frame.type === "queue_update"));
 	});
 

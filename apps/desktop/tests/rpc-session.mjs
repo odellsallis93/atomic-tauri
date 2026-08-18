@@ -118,9 +118,13 @@ export class RpcSession {
 		this.child.stdin.write(`${JSON.stringify(value)}\n`);
 	}
 
-	wait(pred, timeoutMs = 30_000) {
-		const existing = this.frames.findIndex(pred);
-		if (existing !== -1) return Promise.resolve(this.frames.splice(existing, 1)[0]);
+	wait(pred, timeoutMs = 30_000, since) {
+		const haystack = since == null ? this.frames : this.log.slice(since);
+		const existing = haystack.findIndex(pred);
+		if (existing !== -1) {
+			if (since == null) return Promise.resolve(this.frames.splice(existing, 1)[0]);
+			return Promise.resolve(haystack[existing]);
+		}
 		return new Promise((resolve, reject) => {
 			const waiter = {
 				pred,
@@ -136,7 +140,14 @@ export class RpcSession {
 			const timer = setTimeout(() => {
 				const index = this.waiters.indexOf(waiter);
 				if (index !== -1) this.waiters.splice(index, 1);
-				reject(new Error(`timeout waiting for RPC frame. stderr: ${redact(this.stderr)}`));
+				reject(
+					new Error(
+						`timeout waiting for RPC frame. stderr: ${redact(this.stderr)} types: ${this.log
+							.slice(-(since == null ? 20 : Math.max(20, this.log.length - since)))
+							.map((frame) => frame.type)
+							.join(",")}`,
+					),
+				);
 			}, timeoutMs);
 			this.waiters.push(waiter);
 		});
@@ -195,8 +206,8 @@ export function spawnLiveEngine(options = {}) {
 	return { session: new RpcSession(child), cwd, agentDir, child };
 }
 
-export async function waitForAgentEnd(session, timeoutMs = LIVE_RPC_TIMEOUT_MS) {
-	return session.wait((frame) => frame.type === "agent_end", timeoutMs);
+export async function waitForAgentEnd(session, timeoutMs = LIVE_RPC_TIMEOUT_MS, since) {
+	return session.wait((frame) => frame.type === "agent_end", timeoutMs, since);
 }
 
 export async function waitReady(session) {

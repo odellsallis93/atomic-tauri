@@ -117,4 +117,9 @@ test("noteLocalUser suppresses the matching RPC user message", () => {
 		message: { role: "user", content: "hello" },
 	});
 	assert.equal(session.items.filter((item) => item.kind === "user").length, 1);
+	AtomicSession.handleEvent(session, {
+		type: "message_end",
+		message: { role: "user", content: "hello" },
+	});
+	assert.equal(session.items.filter((item) => item.kind === "user").length, 1);
 });
