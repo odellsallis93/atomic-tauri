@@ -13,7 +13,7 @@ For each item:
 3. Smallest protocol change
 4. Test that would prove it
 
-Skip anything that already works. Spawn, `get_state`, `get_messages`, `prompt`, `text_delta` streaming, bash `tool_execution_*`, `abort`, `queue_update` / `streamingBehavior: "steer"|"followUp"`, and the `extension_ui_request` / `extension_ui_response` dance already do.
+Skip anything that already works. A live window on this checkout against OpenAI `gpt-4o-mini` already did spawn, `get_state`, `prompt` (`pong`), bash `pwd` → `/workspace`, abort of `sleep 25` (`ATOMIC · aborted` / tool phase error), and a follow-up after `sleep 20` (`FIRST_TURN` then `queued`). No `extension_ui_request`. Diagnostics copy worked. Default RPC still auto-runs bash.
 
 ## Host identity
 
@@ -98,7 +98,7 @@ Skip anything that already works. Spawn, `get_state`, `get_messages`, `prompt`, 
 ## What this host guessed and should stop guessing
 
 - Args were space-split, so `--cwd "/tmp/My Project"` broke. The bar now takes one argument per line. Still no structured argv type on the protocol; that is a host bug, not an RPC gap.
-- Engine and cwd paths were clipped in a single-line input. They wrap now. Diagnostics still hold the full argv. No protocol change needed.
+- Engine and cwd sit on their own rows and break long paths so `/home/ubuntu/.bun/bin/bun` stays visible. Diagnostics still hold the full argv. No protocol change needed.
 - Mid-stream `prompt` without `streamingBehavior` errors. The composer now sends `followUp` or `steer` on purpose. `queue_update` is the hint. No protocol change needed.
 - Abort was wired but `stopReason` was ignored. The assembler now keeps `aborted` / `error` on the assistant bubble. No protocol change needed.
 - Stderr and spawn failures vanished into `console.debug`. They now land in the transcript and a copyable diagnostics panel. No protocol change needed.

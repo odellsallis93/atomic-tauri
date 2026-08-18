@@ -133,7 +133,11 @@ body {
 	flex-direction: column;
 	gap: 0.3rem;
 	flex: 1 1 12rem;
-	min-width: 10rem;
+	min-width: 0;
+}
+
+.field-wide {
+	flex: 1 1 100%;
 }
 
 .field-args {
@@ -174,6 +178,7 @@ select {
 	resize: vertical;
 	min-height: 2.6rem;
 	overflow-wrap: anywhere;
+	word-break: break-all;
 	white-space: pre-wrap;
 }
 

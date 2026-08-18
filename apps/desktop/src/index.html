@@ -24,7 +24,7 @@
 			</header>
 
 			<section class="engine-bar" id="engine-bar">
-				<label class="field">
+				<label class="field field-wide">
 					<span>Engine</span>
 					<textarea
 						id="engine-program"
@@ -32,6 +32,10 @@
 						spellcheck="false"
 						autocomplete="off"
 					></textarea>
+				</label>
+				<label class="field field-wide">
+					<span>Cwd</span>
+					<textarea id="engine-cwd" rows="2" spellcheck="false" autocomplete="off"></textarea>
 				</label>
 				<label class="field field-args">
 					<span>Args (one per line)</span>
@@ -41,10 +45,6 @@
 						spellcheck="false"
 						placeholder="--mode&#10;rpc"
 					></textarea>
-				</label>
-				<label class="field">
-					<span>Cwd</span>
-					<textarea id="engine-cwd" rows="2" spellcheck="false" autocomplete="off"></textarea>
 				</label>
 				<button type="button" class="btn" id="engine-toggle">Start engine</button>
 			</section>
