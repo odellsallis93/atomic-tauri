@@ -17,7 +17,7 @@ This proof of concept is that host:
 
 1. Spawn `atomic --mode rpc` (or this checkout's CLI) with piped stdio.
 2. Speak the documented JSONL RPC from [RPC mode](/rpc).
-3. Render user/assistant text, streaming deltas, tool status, and blocking extension dialogs.
+3. Render user/assistant text, streaming deltas, tool cards, abort/`stopReason`, follow-up vs steer, stderr/diagnostics, and blocking extension dialogs.
 
 It does not read credential or configuration files. The engine still owns sessions, tools, extensions, settings, models, trust, and authentication.
 
@@ -31,7 +31,18 @@ cargo test
 cargo run
 ```
 
-`ATOMIC_DESKTOP_ENGINE` overrides the child command. `--mode rpc` is added if missing. Details, Linux WebKit packages, and the protocol gaps the host ran into are in `apps/desktop/README.md` at the repository root.
+`ATOMIC_DESKTOP_ENGINE` overrides the child command. `ATOMIC_DESKTOP_ENGINE_ARGS` appends extra tokens to the default command. `--mode rpc` is added if missing.
+
+Assembler tests (no network) and live RPC tests (Anthropic Haiku, skipped without `ANTHROPIC_API_KEY`):
+
+```bash
+node --test apps/desktop/tests/session.test.mjs
+node --test apps/desktop/tests/live-rpc.test.mjs
+```
+
+The live tests spawn this checkout's CLI over `--mode rpc`. They do not use a mock engine.
+
+Details, Linux WebKit packages, and the protocol gaps the host ran into are in `apps/desktop/README.md` and `apps/desktop/PROTOCOL_GAPS.md` at the repository root.
 
 ## What this does not change
 

@@ -76,7 +76,7 @@ pub fn default_engine_invocation() -> EngineInvocation {
 		let dist_cli = repo.join("packages/coding-agent/dist/cli.js");
 		if source_cli.is_file() {
 			if let Some(bun) = find_on_path("bun") {
-				return EngineInvocation {
+				let mut invocation = EngineInvocation {
 					program: bun.display().to_string(),
 					args: vec![
 						source_cli.display().to_string(),
@@ -85,26 +85,32 @@ pub fn default_engine_invocation() -> EngineInvocation {
 					],
 					cwd: Some(repo.display().to_string()),
 				};
+				apply_extra_engine_args(&mut invocation.args);
+				return invocation;
 			}
 		}
 		if dist_cli.is_file() {
 			if let Some(node) = find_on_path("node") {
-				return EngineInvocation {
+				let mut invocation = EngineInvocation {
 					program: node.display().to_string(),
 					args: vec![dist_cli.display().to_string(), "--mode".to_string(), "rpc".to_string()],
 					cwd: Some(repo.display().to_string()),
 				};
+				apply_extra_engine_args(&mut invocation.args);
+				return invocation;
 			}
 		}
 	}
 
-	EngineInvocation {
+	let mut invocation = EngineInvocation {
 		program: find_on_path("atomic")
 			.map(|path| path.display().to_string())
 			.unwrap_or_else(|| "atomic".to_string()),
 		args: vec!["--mode".to_string(), "rpc".to_string()],
 		cwd: env::current_dir().ok().map(|path| path.display().to_string()),
-	}
+	};
+	apply_extra_engine_args(&mut invocation.args);
+	invocation
 }
 
 pub fn parse_invocation(raw: &str, cwd: Option<PathBuf>) -> EngineInvocation {
@@ -125,6 +131,21 @@ pub fn ensure_rpc_mode(args: &mut Vec<String>) {
 		args.push("--mode".to_string());
 		args.push("rpc".to_string());
 	}
+}
+
+pub fn append_arg_tokens(args: &mut Vec<String>, raw: &str) {
+	for token in tokenize(raw) {
+		if !token.is_empty() {
+			args.push(token);
+		}
+	}
+}
+
+fn apply_extra_engine_args(args: &mut Vec<String>) {
+	if let Ok(raw) = env::var("ATOMIC_DESKTOP_ENGINE_ARGS") {
+		append_arg_tokens(args, &raw);
+	}
+	ensure_rpc_mode(args);
 }
 
 pub async fn spawn_engine(
@@ -271,7 +292,13 @@ fn tokenize(raw: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-	use super::{ensure_rpc_mode, parse_invocation};
+	use super::{
+		EngineOutput, append_arg_tokens, default_engine_invocation, ensure_rpc_mode,
+		parse_invocation, spawn_engine,
+	};
+	use serde_json::json;
+	use std::env;
+	use tokio::sync::mpsc;
 
 	#[test]
 	fn appends_rpc_mode_when_missing() {
@@ -292,5 +319,72 @@ mod tests {
 		let invocation = parse_invocation(r#"/usr/bin/atomic --mode rpc --name "desk poc""#, None);
 		assert_eq!(invocation.program, "/usr/bin/atomic");
 		assert_eq!(invocation.args, ["--mode", "rpc", "--name", "desk poc"]);
+	}
+
+	#[test]
+	fn extra_arg_tokens_keep_quoted_paths() {
+		let mut args = vec!["--mode".to_string(), "rpc".to_string()];
+		append_arg_tokens(&mut args, r#"--no-session --cwd "/tmp/My Project""#);
+		assert_eq!(args, ["--mode", "rpc", "--no-session", "--cwd", "/tmp/My Project"]);
+	}
+
+	#[tokio::test(flavor = "multi_thread")]
+	async fn live_rpc_get_state_when_anthropic_key_present() {
+		let key = env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+		if key.trim().is_empty() {
+			eprintln!("skip live_rpc_get_state_when_anthropic_key_present: ANTHROPIC_API_KEY unset");
+			return;
+		}
+
+		if let Ok(home) = env::var("HOME") {
+			let bun_dir = std::path::PathBuf::from(home).join(".bun/bin");
+			if bun_dir.join("bun").is_file() {
+				let path = env::var("PATH").unwrap_or_default();
+				let prefix = bun_dir.display().to_string();
+				if !path.split(':').any(|entry| entry == prefix) {
+					env::set_var("PATH", format!("{prefix}:{path}"));
+				}
+			}
+		}
+
+		let mut invocation = default_engine_invocation();
+		append_arg_tokens(
+			&mut invocation.args,
+			"--no-session --no-extensions --provider anthropic --model haiku",
+		);
+		ensure_rpc_mode(&mut invocation.args);
+
+		let (tx, mut rx) = mpsc::unbounded_channel();
+		let mut engine = spawn_engine(invocation, tx).await.expect("spawn live engine");
+		engine
+			.send_value(&json!({ "id": "req-1", "type": "get_state" }))
+			.await
+			.expect("send get_state");
+
+		let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+		let mut saw = false;
+		while tokio::time::Instant::now() < deadline {
+			match tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await {
+				Ok(Some(EngineOutput::Stdout(line))) => {
+					let value: serde_json::Value = serde_json::from_str(&line).expect("json");
+					if value["type"] == "response" && value["id"] == "req-1" {
+						assert_eq!(value["success"], true);
+						assert_eq!(value["command"], "get_state");
+						assert_eq!(value["data"]["model"]["provider"], "anthropic");
+						let model_id = value["data"]["model"]["id"].as_str().unwrap_or("");
+						assert!(model_id.contains("haiku"), "unexpected model id {model_id}");
+						saw = true;
+						break;
+					}
+				},
+				Ok(Some(EngineOutput::Exited { code })) => {
+					panic!("engine exited before get_state ({code:?})");
+				},
+				Ok(Some(_)) => {},
+				Ok(None) | Err(_) => break,
+			}
+		}
+		let _ = engine.kill().await;
+		assert!(saw, "did not receive get_state from the live engine");
 	}
 }
