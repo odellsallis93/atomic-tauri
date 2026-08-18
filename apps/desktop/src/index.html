@@ -26,20 +26,25 @@
 			<section class="engine-bar" id="engine-bar">
 				<label class="field">
 					<span>Engine</span>
-					<input id="engine-program" spellcheck="false" autocomplete="off" />
+					<textarea
+						id="engine-program"
+						rows="2"
+						spellcheck="false"
+						autocomplete="off"
+					></textarea>
 				</label>
 				<label class="field field-args">
 					<span>Args (one per line)</span>
 					<textarea
 						id="engine-args"
-						rows="3"
+						rows="4"
 						spellcheck="false"
 						placeholder="--mode&#10;rpc"
 					></textarea>
 				</label>
 				<label class="field">
 					<span>Cwd</span>
-					<input id="engine-cwd" spellcheck="false" autocomplete="off" />
+					<textarea id="engine-cwd" rows="2" spellcheck="false" autocomplete="off"></textarea>
 				</label>
 				<button type="button" class="btn" id="engine-toggle">Start engine</button>
 			</section>

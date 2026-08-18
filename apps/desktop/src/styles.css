@@ -126,7 +126,6 @@ body {
 	flex-wrap: wrap;
 	gap: 0.75rem;
 	align-items: end;
-	overflow-x: auto;
 }
 
 .field {
@@ -170,10 +169,12 @@ select {
 }
 
 #engine-program,
-#engine-cwd {
-	overflow-x: auto;
-	text-overflow: clip;
-	white-space: nowrap;
+#engine-cwd,
+#engine-args {
+	resize: vertical;
+	min-height: 2.6rem;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
 }
 
 input:focus,

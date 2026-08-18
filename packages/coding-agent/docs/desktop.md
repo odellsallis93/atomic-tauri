@@ -27,20 +27,14 @@ From a source checkout:
 
 ```bash
 cd apps/desktop/src-tauri
-cargo test
 cargo run
 ```
 
 `ATOMIC_DESKTOP_ENGINE` overrides the child command. `ATOMIC_DESKTOP_ENGINE_ARGS` appends extra tokens to the default command. `--mode rpc` is added if missing.
 
-Assembler tests (no network) and live RPC tests (Anthropic Haiku, skipped without `ANTHROPIC_API_KEY`):
+If builtin native bindings are not built, pass `--no-extensions` or the RPC child exits on startup. `--no-session` keeps the PoC from writing a session file.
 
-```bash
-node --test apps/desktop/tests/session.test.mjs
-node --test apps/desktop/tests/live-rpc.test.mjs
-```
-
-The live tests spawn this checkout's CLI over `--mode rpc`. They do not use a mock engine.
+There is no desktop test suite. Launch the window and send a prompt.
 
 Details, Linux WebKit packages, and the protocol gaps the host ran into are in `apps/desktop/README.md` and `apps/desktop/PROTOCOL_GAPS.md` at the repository root.
 

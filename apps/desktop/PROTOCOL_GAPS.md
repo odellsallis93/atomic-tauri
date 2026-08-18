@@ -2,7 +2,7 @@
 
 This is the issue 2352 follow-up: run a real host on today's RPC, then write down what a GUI still cannot do cleanly. Nothing here is implemented. Each gap is a candidate for a small additive RPC change, not a new `--mode gui`.
 
-Evidence comes from this host and from `apps/desktop/tests/live-rpc.test.mjs`, which spawns `packages/coding-agent/src/cli.ts --mode rpc` and talks to Anthropic Haiku when `ANTHROPIC_API_KEY` is set. No mock engine.
+Evidence comes from launching `apps/desktop` against this checkout's CLI (`bun packages/coding-agent/src/cli.ts --mode rpc`) with a real provider key inherited by the child. The webview never reads `~/.atomic`. There is no mock engine and no desktop test suite.
 
 ## How to read a gap
 
@@ -27,13 +27,13 @@ Skip anything that already works. Spawn, `get_state`, `get_messages`, `prompt`, 
 
 ## Session listing
 
-**Tried.** After `get_state`, send `{ "type": "list_sessions" }` so a recents list could be drawn without touching disk. Live test: the command fails with `Unknown command: list_sessions`. `get_state` has `sessionId` and optional `sessionFile` / `sessionName`. `--no-session` leaves `sessionFile` unset. There is still no list.
+**Tried.** After `get_state`, the window has one session id. There is no command that returns other sessions. Sending `{ "type": "list_sessions" }` fails with `Unknown command: list_sessions`. `get_state` has `sessionId` and optional `sessionFile` / `sessionName`. `--no-session` leaves `sessionFile` unset.
 
 **Unclean.** `switch_session` takes a path. A desktop "Open recent" UI would have to read `~/.atomic/agent/sessions` itself. This host must not do that. The webview has no business opening credential or session files.
 
 **Smallest change.** `list_sessions` returning id, name, mtime, path (or an opaque handle `switch_session` already understands). Optional recents cap. No file contents.
 
-**Proving test.** Create two named sessions via RPC, call `list_sessions`, assert both rows, `switch_session` to the other id/path, `get_state.sessionId` matches. Desktop test must not `fs.readFile` the sessions dir.
+**Proving test.** Create two named sessions via RPC, call `list_sessions`, assert both rows, `switch_session` to the other id/path, `get_state.sessionId` matches. A desktop host must not `fs.readFile` the sessions dir.
 
 ## Project folder / cwd
 
@@ -43,13 +43,13 @@ Skip anything that already works. Spawn, `get_state`, `get_messages`, `prompt`, 
 
 **Smallest change.** `set_cwd` that either (a) fails while streaming, or (b) documents that it implies `new_session`. Returning `{ restartRequired: true }` is enough if the engine cannot rebind in place.
 
-**Proving test.** `set_cwd` to a temp dir, `prompt` "run pwd", tool output is the new dir, same `sessionId` or an explicit new id in the response. A second test: `set_cwd` while streaming returns a correlated error.
+**Proving test.** `set_cwd` to a temp dir, `prompt` "run pwd", tool output is the new dir, same `sessionId` or an explicit new id in the response. A second case: `set_cwd` while streaming returns a correlated error.
 
 ## Typed permission prompts
 
-**Tried.** The UI already handles `extension_ui_request` for `confirm` / `select` / `input` / `editor`. Live bash with `--no-extensions` never emitted `extension_ui_request`. The tool ran, `tool_execution_start` arrived, and that was the whole permission story.
+**Tried.** The UI already handles `extension_ui_request` for `confirm` / `select` / `input` / `editor`. Live bash on the default desktop engine never emitted `extension_ui_request`. The tool ran, `tool_execution_start` arrived, and that was the whole permission story.
 
-**Unclean.** Default RPC auto-runs bash. A desktop host cannot show Allow/Deny without parsing title strings from some extension, and with builtins disabled there is no prompt at all. `select` with a title of "Allow bash?" is not a permission primitive.
+**Unclean.** Default RPC auto-runs bash. A desktop host cannot show Allow/Deny without parsing title strings from some extension. `select` with a title of "Allow bash?" is not a permission primitive.
 
 **Smallest change.** A dedicated event, for example `permission_request` with `toolName`, `args`, `scope: "once" | "session" | "always"`, answered by `permission_response`. Keep `extension_ui_request` for real extension dialogs.
 
@@ -63,7 +63,7 @@ Skip anything that already works. Spawn, `get_state`, `get_messages`, `prompt`, 
 
 **Smallest change.** A web-oriented custom-UI payload (JSON schema + HTML or a named view id). Not remote TUI paint.
 
-**Proving test.** Fixture extension calls `ctx.ui.custom(...)`. RPC host receives a structured event, replies, extension continues. Fail the test if the payload contains ANSI CSI.
+**Proving test.** Fixture extension calls `ctx.ui.custom(...)`. RPC host receives a structured event, replies, extension continues. Fail if the payload contains ANSI CSI.
 
 ## Themes
 
@@ -73,17 +73,17 @@ Skip anything that already works. Spawn, `get_state`, `get_messages`, `prompt`, 
 
 **Smallest change.** Optional `theme` on `get_state` or a `theme_changed` event: background/text/accent tokens only.
 
-**Proving test.** Change theme via RPC or settings the engine owns, assert the event. Host test applies tokens without opening `~/.atomic`.
+**Proving test.** Change theme via RPC or settings the engine owns, assert the event. Host applies tokens without opening `~/.atomic`.
 
 ## Auth / login chrome
 
-**Tried.** If `ANTHROPIC_API_KEY` is in the environment the child inherits, `get_state` reports Haiku and `prompt` works. There is no login UI in this host. `login_provider` exists on the protocol.
+**Tried.** If `OPENAI_API_KEY` is in the environment the child inherits, `get_state` reports `gpt-4o-mini` and `prompt` works. There is no login UI in this host. `login_provider` exists on the protocol.
 
 **Unclean.** OAuth device codes and "open this URL" are not a first-class host event. A desktop app that should open a browser has to scrape `extension_ui_request` copy or dump stderr. The webview still must not read API keys out of `~/.atomic`.
 
 **Smallest change.** `login_provider` already returns data. Add a `login_user_action` event (`open_url`, `show_device_code`) so the host can open a browser without parsing strings. Keep credentials in the engine.
 
-**Proving test.** `login_provider` with `authType: "oauth"` emits `open_url`. Host test asserts the event contains a URL and does not contain a token.
+**Proving test.** `login_provider` with `authType: "oauth"` emits `open_url`. Assert the event contains a URL and does not contain a token.
 
 ## Notifications / window title
 
@@ -98,6 +98,7 @@ Skip anything that already works. Spawn, `get_state`, `get_messages`, `prompt`, 
 ## What this host guessed and should stop guessing
 
 - Args were space-split, so `--cwd "/tmp/My Project"` broke. The bar now takes one argument per line. Still no structured argv type on the protocol; that is a host bug, not an RPC gap.
+- Engine and cwd paths were clipped in a single-line input. They wrap now. Diagnostics still hold the full argv. No protocol change needed.
 - Mid-stream `prompt` without `streamingBehavior` errors. The composer now sends `followUp` or `steer` on purpose. `queue_update` is the hint. No protocol change needed.
 - Abort was wired but `stopReason` was ignored. The assembler now keeps `aborted` / `error` on the assistant bubble. No protocol change needed.
 - Stderr and spawn failures vanished into `console.debug`. They now land in the transcript and a copyable diagnostics panel. No protocol change needed.

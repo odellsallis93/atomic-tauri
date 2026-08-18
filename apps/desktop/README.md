@@ -18,7 +18,7 @@ The webview does not read `~/.atomic` credential or settings files. It spawns th
 
 ## What it renders
 
-- Engine start/stop. Default command prefers this checkout's CLI (`bun packages/coding-agent/src/cli.ts --mode rpc`). Args are one token per line, so paths with spaces stay intact.
+- Engine start/stop. Default command prefers this checkout's CLI (`bun packages/coding-agent/src/cli.ts --mode rpc`). Args are one token per line, so paths with spaces stay intact. Engine and cwd wrap instead of clipping.
 - Session transcript from `get_messages`, then live `message_start` / `message_update` / `message_end`
 - Prompt input. While a turn is running, send is either `streamingBehavior: "followUp"` or `"steer"` (composer control). `queue_update` shows up in the hint.
 - Abort, with `stopReason` `aborted` / `error` on the assistant bubble
@@ -51,30 +51,18 @@ Override the engine with `ATOMIC_DESKTOP_ENGINE`. Extra default tokens (still qu
 
 ```bash
 ATOMIC_DESKTOP_ENGINE="atomic --mode rpc --no-session" cargo run
-ATOMIC_DESKTOP_ENGINE_ARGS='--no-extensions --provider anthropic --model haiku' cargo run
+ATOMIC_DESKTOP_ENGINE_ARGS='--no-session --no-extensions --provider openai --model gpt-4o-mini' cargo run
 ```
 
 The host always ensures `--mode rpc` is present. It writes JSONL with LF only, including on Windows.
 
-## Tests
+Builtin extensions need the native binding. If that binding is missing, the RPC child exits on startup unless you pass `--no-extensions`. `--no-session` keeps this PoC from writing a session file.
 
-JSONL framing and spawn argv (no GUI):
+## Check it
 
-```bash
-cd apps/desktop/src-tauri
-cargo test
-```
+Launch the window, start the engine, and send a prompt. That is the check. There is no desktop test suite and no mock engine.
 
-If `ANTHROPIC_API_KEY` is set, `cargo test` also runs a live `get_state` against this checkout's CLI and Anthropic Haiku. Without a key that test returns immediately.
-
-Session assembler tests (documented RPC event shapes, no network) and live RPC tests (real Anthropic Haiku, skip if no key):
-
-```bash
-node --test apps/desktop/tests/session.test.mjs
-node --test apps/desktop/tests/live-rpc.test.mjs
-```
-
-The live suite spawns `bun packages/coding-agent/src/cli.ts --mode rpc --no-session --no-extensions --provider anthropic --model haiku`, keeps stdin open until `agent_end`, and never logs secret values. Named budget: `LIVE_RPC_TIMEOUT_MS` (120s) in `tests/rpc-session.mjs`. There is no mock engine.
+If you change the JSONL decoder in `src-tauri/src/jsonl.rs`, `cargo test` in that crate still covers LF-only framing.
 
 ## Protocol additions this host made obvious
 
@@ -82,11 +70,11 @@ See [PROTOCOL_GAPS.md](./PROTOCOL_GAPS.md). Short version:
 
 **Host identity.** RPC sessions bind extensions with `ctx.mode === "rpc"` and `ctx.hasUI === true`. This desktop host and a CI embedder look the same.
 
-**Session listing.** `list_sessions` is not a command. Live test asserts that. A recents UI would otherwise read `~/.atomic/agent/sessions`, which this host must not do.
+**Session listing.** `list_sessions` is not a command. A recents UI would otherwise read `~/.atomic/agent/sessions`, which this host must not do.
 
 **Project folder.** Cwd is fixed at spawn. "Open folder" today means kill and respawn.
 
-**Typed permission prompts.** Live bash with `--no-extensions` never emits `extension_ui_request`. Tool approval as a generic confirm/select is not Allow/Deny.
+**Typed permission prompts.** Default RPC auto-runs bash. Tool approval as a generic confirm/select is not Allow/Deny.
 
 **Custom UI.** `ctx.ui.custom()` is TUI-only over RPC. Structured `tool_execution_*` events are enough for a basic tool card.
 
@@ -94,7 +82,7 @@ See [PROTOCOL_GAPS.md](./PROTOCOL_GAPS.md). Short version:
 
 **Auth.** `login_provider` exists. This host has no login chrome. Keys are inherited by the engine child; the webview does not read them.
 
-What already worked without protocol changes, and is covered by the live tests when a key is present: spawn, `get_state`, `prompt`, a completed assistant turn (Haiku sometimes skips `text_delta` on a one-word reply; the assembler still handles deltas), bash tool lifecycle, abort, steer / `queue_update`.
+What already worked without protocol changes: spawn, `get_state`, `prompt`, a completed assistant turn, bash tool lifecycle, abort, steer / `queue_update`.
 
 ## Suggested follow-up PRs
 
